@@ -1,90 +1,92 @@
-//deepth set('name.prop') aby nie trzeba bylo tworzyc za duzo obiektow
-//set.except aby pominac przy zapisie ale ujac w event
 window.db = function(path){
 	return new window.db.handler(path);
 }
-
+window.db.queue = [];
+window.db.interval = null;
 window.db.handler = function(obj){
 	this.handler = {
 		events: {},
 		back: {},
-		cloned: false
+		cloned: false,
+		silent: false
 	};
 
 	this.backup = {};
 	this.get = obj;
-	this.set = function(name,data,except){
+	this.set = function(path,data,except){
 		var back = this.handler.back,
 			prev = {},
-			handle, i;
+			now;
 
-		if(typeof name == 'string') {
-			handle = name;
-			name = {};
-			name[handle] = data;
-		}else{
-			except = data;
-		}
+		var main = this.get,
+			last = path,
+			tPath = path;
 
-		for(i in name){
-			var prop = window.db.comp(this.get,i.split('.')),
-				main = prop[0],
-				ele = prop[1],
-				val = main[ele],
-				now;
-
-			if(except==true){
-				//window.db.emit(i,name[i],prev,'set',this.hand.name,this.hand.mark);
-				continue;
-			}else if(except){
-				now = Object.create(name[i]);
-				//deepth clean??
-				except.forEach(function(arg){
-					delete name[i][arg];
-				});
-			}else
-				now = name[i];
-
-			if(!(i in main)){
-				//window.db.emit(i,now,null,'init',this.hand.name,this.hand.mark,this.hand.mark);
-				this.main[ele] = now;
-				continue;
+		if(Array.isArray(path)){
+			for(var i=0;i<path.length-1;i++){
+				main = main[path[i]];
 			}
 
-			if(val instanceof Date)
-				prev = (new Date(val.getTime()));
-			else if(val instanceof Object) {
-				prev = val;
-				val = Object.create(val);
-			}else    prev = val;
-
-			if(typeof name[i] == 'function')
-				name[i](val);
-			else
-				main[i] = name[i];
-
-			//window.db.emit(i,now,prev,'set',this.hand.name,this.hand.mark);
-
-			if(i in back){
-				if(!this.backup[i])
-					this.backup[i] = [prev];
-				else if((back[i]+1)==this.backup[i].unshift(prev))
-					this.backup[i].pop();
-			}
+			tPath = path.join('.');
+			last = path[i+1];
 		}
+
+		if(except){
+			now = Object.create(data);
+			except.forEach(function(arg){
+				delete data[arg];
+			});
+		}else
+			now = data;
+
+		if(!(last in main)){
+			this.emit('init',last,now,null);
+			this.main[last] = now;
+			return this;
+		}
+
+		var val = main[last];
+
+		if(val instanceof Date)
+			prev = (new Date(val.getTime()));
+		else if(val instanceof Object) {
+			prev = val;
+			val = Object.create(val);
+		}else    prev = val;
+
+		if(typeof data == 'function')
+			data(val);
+		else
+			main[last] = data;
+
+		this.emit('set',last,now,prev);
+
+		if(tPath in back){
+			if(!this.backup[tPath])
+				this.backup[tPath] = [prev];
+			else if((back[tPath]+1)==this.backup[tPath].unshift(prev))
+				this.backup[tPath].pop();
+		}
+
 		return this;
 	};
-	this.delete = function(name){
-		var param = window.db._parse(this.get,name),
-			i = param.main.length;
+	this.delete = function(path){
+		var main = this.get,
+			last = path,
+			tPath = path;
 
-		while(i--){
-			param.last[i].forEach(function(prop){
-				//emit
-				delete param.main[i][prop];
-			});
-			param.main[i][param.last[i]]
+		if(Array.isArray(path)){
+			for(var i=0;i<path.length-1;i++){
+				main = main[path[i]];
+			}
+
+			tPath = path.join('.');
+			last = path[i+1];
 		}
+
+		this.emit('delete',last,main[last],null);
+		delete main[last];
+		delete this.backup[tPath];
 	};
 	this.on = function(event,name,fun,obj){
 		var events = this.handler.events;
@@ -99,59 +101,52 @@ window.db.handler = function(obj){
 
 		events[event][name] = fun.bind(obj);
 	};
-	this.emit = function(event,name){
-		if(!(event in this.handler.events))
-			return
+	this.emit = function(event,name,now,prev){
+		if(this.handler.silient)
+			return this;
 
-		var events = this.handler.events[event],
-			deep = function(prev,args){
-				var curr = args.shift();
-				if(!args.length){
-					var c = prev+curr,
-						n = prev+'*';
+		var events = this.handler.events[event];
 
-					if(c in events)
-						events[c]();
-					if(n in events)
-						events[n]();
+		window.db.queue.push({fuu: events[name], now: now, prev: prev, name: name});
+
+		if(!window.db.interval){
+			window.db.interval = setInterval(function() {
+				if(window.db.queue[0]){
+					var b = window.db.queue.shift();
+					b.fuu(b.now, b.prev, b.name);
 				}else{
-					deep(prev+'*.',args.slice());
-					deep(prev+curr+'.',args)
+					clearInterval(window.db.interval);
+					window.db.interval = null;
 				}
-			};
+			}, 0);
+		}
 
-		if(!Array.isArray(name))
-			name = name.split('.');
-
-		deep('',name);
+		return this;
 	};
-	this.back = function(reg,reset){
-		var name = {},
-			i;
+	this.back = function(path,reset){
+		var main = this.get,
+			last = path,
+			tPath = path;
 
-		if(reg in this.backup)
-			name[reg] = reset;
-		else{
-			reg = window.db._exp(reg);
-			for(i in this.backup){
-				if(reg.test(i))
-					name[i] = reset;
-			}
-		}
-
-		for(i in name){
-			if(name[i]==-1)
-				name[i] = this.backup[i].length-1;
-			else if(!name[i]){//reset
-				this.backup[i] = [];
-				continue;
+		if(Array.isArray(path)){
+			for(var i=0;i<path.length-1;i++){
+				main = main[path[i]];
 			}
 
-			//window.db.emit(i,this.backup[i][name[i]],this.get[i],'backup',this.hand.name,this.hand.mark);
-			var prop = window.db.comp(this.get,i);
-			prop[0][prop[1]] = this.backup[i][name[i]];
-			this.backup[i].splice(0,name[i]+1);
+			tPath = path.join('.');
+			last = path[i+1];
 		}
+
+		if(reset==-1)
+			reset = this.backup[tPath].length-1;
+		else if(!reset){//reset
+			this.backup[tPath] = [];
+			return this;
+		}
+
+		this.emit('set',i,this.backup[tPath][reset],main[last]);
+		main[last] = this.backup[tPath][reset];
+		this.backup[tPath].splice(0,reset+1);
 
 		return this;
 	};
@@ -162,6 +157,13 @@ window.db.handler = function(obj){
 			delete  this.handler.back[name];
 			delete  this.backup[name];
 		}
+	};
+	this.s = function(ok){
+		if(!ok)
+			ok = !this.handler.silent;
+
+		this.handler.silent = !!ok;
+		return this;
 	}
 	this.clone = function(){
 		var clone = new window.db.handler(this.get);
@@ -169,66 +171,3 @@ window.db.handler = function(obj){
 		return clone;
 	};
 };
-
-function k(main,path){
-	var parts = path.split('.'),
-		parents = [],
-		childs = [];
-
-	for(var i=0; i<parts.length-1;i++){
-		if(parts[i]=='*')
-			Object.keys(main)
-		else
-		main = main[parts[i]];
-	}
-	parents.push(main);
-	childs.push()
-	return {
-		main: main,
-		name: parts[i]
-	};
-}
-
-window.db._parse = function(main,path){
-	var parts = path.split('.'),
-		end = parts.length-1,
-		all = {main: [], last:[]};
-
-	var grow = function(main,steps,i){
-			if(steps[i]=='*'){
-				var args = Object.keys(main);
-				if(end==i){
-					all.main.push(main);
-					all.last.push(args);
-					return;
-				}
-
-				args.forEach(function(prop){
-					if(prop in main)
-						grow(main[prop],steps,i+1);
-				});
-			}else if(steps[i] in main){
-				if(end==i){
-					all.main.push(main);
-					all.last.push([steps[i]]);
-					return;
-				}else
-					grow(main[steps[i]],steps,i+1);
-			}
-		}
-
-	grow(main,parts,0);
-	return all;
-}
-
-window.db.comp = function(main,array){
-
-	for(var i=0; i<array.length-1;i++){
-		main = main[array[i]];
-	}
-	return [main,array[i]];
-}
-
-window.db._exp = function(regExp){
-	return new RegExp('^'+regExp.replace(/\./g,'\\.').replace(/\*/g,'[^\\.]+')+'$');
-}
