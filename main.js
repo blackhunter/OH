@@ -28,38 +28,43 @@ window.db.handler = function(obj){
 			}
 
 			tPath = path.join('.');
-			last = path[i+1];
+			last = path[i];
 		}
 
 		if(except){
-			now = Object.create(data);
+			now = {};
+			for(var i in data){
+				now[i] = data[i];
+			}
 			except.forEach(function(arg){
-				delete data[arg];
+				delete now[arg];
 			});
 		}else
 			now = data;
 
 		if(!(last in main)){
-			this.emit('init',last,now,null);
-			this.main[last] = now;
+			main[last] = now;
+			this.emit('set',path,data,null);
 			return this;
 		}
 
 		var val = main[last];
-
-		if(val instanceof Date)
-			prev = (new Date(val.getTime()));
-		else if(val instanceof Object) {
-			prev = val;
-			val = Object.create(val);
-		}else    prev = val;
-
-		if(typeof data == 'function')
+		if(typeof data == 'function'){
+			if(val instanceof Date)
+				prev = (new Date(val.getTime()));
+			else if(val instanceof Object) {
+				prev = val;
+				val = Object.create(val);
+			}else
+				prev = val;
 			data(val);
-		else
-			main[last] = data;
+			data = val;
+		}else{
+			prev = val;
+			main[last] = now;
+		}
 
-		this.emit('set',last,now,prev);
+		this.emit('set',path,data,prev);
 
 		if(tPath in back){
 			if(!this.backup[tPath])
@@ -81,39 +86,67 @@ window.db.handler = function(obj){
 			}
 
 			tPath = path.join('.');
-			last = path[i+1];
+			last = path[i];
 		}
 
-		this.emit('delete',last,main[last],null);
+		this.emit('delete',path,main[last],null);
 		delete main[last];
 		delete this.backup[tPath];
 	};
-	this.on = function(event,name,fun,obj){
-		var events = this.handler.events;
-		if(typeof name == 'function'){
-			obj = fun;
-			fun = name;
-			name = '*';
+	this.on = function(event,fun,obj){
+		var events = this.handler.events,
+			parts = event.split(':'),
+			path = parts[1].join.apply(this,parts[0].split('.')),
+			i;
+
+		for(i=0;i<path.length;i++){
+			if(i>0){
+				if(!('next' in events))
+					events['next'] = {};
+				events = events.next;
+			}
+
+			if(!(path[i] in events))
+				events[path[i]] = {};
+			events = events[path[i]];
 		}
+		if(!('arr' in events))
+			events['arr'] = [];
 
-		if(!(event in events))
-			events[event] = {};
-
-		events[event][name] = fun.bind(obj);
+		events['arr'].push(fun.bind(obj));
 	};
 	this.emit = function(event,name,now,prev){
-		if(this.handler.silient)
+		if(!Array.isArray(name))
+			name = [name];
+		var end = name.length,
+			events = this.handler.events[event],
+			comb = function(main,i,arr){
+				if(i<end){
+					if('next' in main){
+						if('*' in main.next)
+							comb(main['*'],i+1,arr);
+						if(arr[i] in main.next)
+							comb(main[arr[i]],i+1,arr);
+					}
+				}else{
+					var j = main.arr.length;
+					while(j--){
+						window.db.queue.push({fuu: main.arr[j], now: now, prev: prev, name: name});
+					}
+				}
+			}
+
+		if(this.handler.silent || events)
 			return this;
 
-		var events = this.handler.events[event];
-
-		window.db.queue.push({fuu: events[name], now: now, prev: prev, name: name});
+		comb(events,0,name);
 
 		if(!window.db.interval){
 			window.db.interval = setInterval(function() {
 				if(window.db.queue[0]){
 					var b = window.db.queue.shift();
 					b.fuu(b.now, b.prev, b.name);
+					
 				}else{
 					clearInterval(window.db.interval);
 					window.db.interval = null;
@@ -134,7 +167,7 @@ window.db.handler = function(obj){
 			}
 
 			tPath = path.join('.');
-			last = path[i+1];
+			last = path[i];
 		}
 
 		if(reset==-1)
@@ -144,7 +177,7 @@ window.db.handler = function(obj){
 			return this;
 		}
 
-		this.emit('set',i,this.backup[tPath][reset],main[last]);
+		this.emit('set',path,this.backup[tPath][reset],main[last]);
 		main[last] = this.backup[tPath][reset];
 		this.backup[tPath].splice(0,reset+1);
 
